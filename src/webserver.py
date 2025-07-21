@@ -283,7 +283,7 @@ class WeatherWebServer:
         """Generate a plot for the specified data type and date range."""
         data = self.get_data_by_date_range(data_type, start_date, end_date)
         if not data:
-            return self.generate_no_data_plot(f"No {data_type} data available for the selected period")
+            return self.generate_no_data_plot(f"N/A")
             
         # Calculate statistics
         values = data['values']
@@ -292,7 +292,7 @@ class WeatherWebServer:
         max_val = max(values)
         
         # Create the plot
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=(12, 12))
         
         # Determine plot properties based on data type
         if data_type == 'temperature':
