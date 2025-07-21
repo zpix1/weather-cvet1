@@ -43,6 +43,10 @@ EXPOSE 3300
 COPY docker-entrypoint.sh /app/
 USER root
 RUN chmod +x /app/docker-entrypoint.sh
+
+RUN chown -R appuser:appgroup /app
+RUN chown -R appuser:appgroup /app/data
+
 USER appuser
 
 # Default command
