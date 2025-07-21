@@ -24,8 +24,9 @@ RUN mkdir -p /app/data
 RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup
 
-# Change ownership of app directory
+# Change ownership of app directory including data directory
 RUN chown -R appuser:appgroup /app
+RUN chmod -R 755 /app/data
 
 # Switch to non-root user
 USER appuser

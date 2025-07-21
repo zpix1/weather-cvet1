@@ -33,6 +33,9 @@ class WeatherWebServer:
     def get_latest_data(self):
         """Fetch the latest temperature and humidity data from the database."""
         try:
+            # Ensure the directory exists
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
