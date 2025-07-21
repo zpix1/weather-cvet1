@@ -3,9 +3,6 @@ FROM python:3.11
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apk add --no-cache gcc musl-dev
-
 # Install uv
 RUN pip install --no-cache-dir uv
 
