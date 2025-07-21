@@ -9,7 +9,7 @@ import sqlite3
 import requests
 import json
 import calendar
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 import time
 from pathlib import Path
@@ -91,7 +91,13 @@ class HomeAssistantLoader:
     def store_temperature(self, value, timestamp=None):
         """Store temperature data in the database with unique timestamp."""
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = datetime.now(timezone.utc)
+        
+        # Ensure timestamp is timezone-aware UTC
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        elif timestamp.tzinfo != timezone.utc:
+            timestamp = timestamp.astimezone(timezone.utc)
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -100,7 +106,7 @@ class HomeAssistantLoader:
             cursor.execute('''
                 INSERT OR IGNORE INTO temperature_data (timestamp, value)
                 VALUES (?, ?)
-            ''', (timestamp, value))
+            ''', (timestamp.isoformat(), value))
             
             conn.commit()
             return cursor.rowcount > 0  # Return True if row was inserted
@@ -113,7 +119,13 @@ class HomeAssistantLoader:
     def store_humidity(self, value, timestamp=None):
         """Store humidity data in the database with unique timestamp."""
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = datetime.now(timezone.utc)
+        
+        # Ensure timestamp is timezone-aware UTC
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        elif timestamp.tzinfo != timezone.utc:
+            timestamp = timestamp.astimezone(timezone.utc)
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -122,7 +134,7 @@ class HomeAssistantLoader:
             cursor.execute('''
                 INSERT OR IGNORE INTO humidity_data (timestamp, value)
                 VALUES (?, ?)
-            ''', (timestamp, value))
+            ''', (timestamp.isoformat(), value))
             
             conn.commit()
             return cursor.rowcount > 0  # Return True if row was inserted
@@ -164,8 +176,18 @@ class HomeAssistantLoader:
                     for state_change in data[0]:  # First entity's data
                         try:
                             timestamp_str = state_change['last_changed']
-                            # Parse ISO format timestamp
-                            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00')).replace(tzinfo=None)
+                            # Parse ISO format timestamp and ensure it's in UTC
+                            if timestamp_str.endswith('Z'):
+                                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                            else:
+                                timestamp = datetime.fromisoformat(timestamp_str)
+                            
+                            # Convert to UTC if not already
+                            if timestamp.tzinfo is None:
+                                timestamp = timestamp.replace(tzinfo=timezone.utc)
+                            else:
+                                timestamp = timestamp.astimezone(timezone.utc)
+                            
                             value = float(state_change['state'])
                             all_historical_data.append((timestamp, value))
                         except (ValueError, KeyError) as e:
@@ -190,11 +212,11 @@ class HomeAssistantLoader:
     
     def load_last_month_data(self):
         """Load data from last month and store it in the database."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         start_time = (now - timedelta(days=30))
         end_time = now
 
-        print(f"Loading data from {start_time.strftime('%Y-%m-%d')} to {end_time.strftime('%Y-%m-%d')}")
+        print(f"Loading data from {start_time.strftime('%Y-%m-%d')} to {end_time.strftime('%Y-%m-%d')} (UTC)")
         
         # Fetch historical data for both sensors
         print("Fetching temperature data...")
@@ -215,12 +237,12 @@ class HomeAssistantLoader:
         earliest_humidity = self.get_earliest_timestamp('humidity_data')
         
         if earliest_temp:
-            print(f"  Earliest temperature data: {earliest_temp.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"  Earliest temperature data: {earliest_temp.strftime('%Y-%m-%d %H:%M:%S')} UTC")
         else:
             print("  No temperature data in database")
             
         if earliest_humidity:
-            print(f"  Earliest humidity data: {earliest_humidity.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"  Earliest humidity data: {earliest_humidity.strftime('%Y-%m-%d %H:%M:%S')} UTC")
         else:
             print("  No humidity data in database")
         
@@ -228,10 +250,10 @@ class HomeAssistantLoader:
 
     def run(self):
         """Fetch recent historical data and store it in the database."""
-        print(f"Fetching recent sensor data at {datetime.now()}")
+        print(f"Fetching recent sensor data at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
         
         # Fetch last hour of data to get the most recent readings
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=1)
         
         # Fetch and store temperature data
@@ -280,7 +302,21 @@ class HomeAssistantLoader:
             cursor.execute(f'SELECT MIN(timestamp) FROM {table_name}')
             result = cursor.fetchone()
             if result and result[0]:
-                return datetime.fromisoformat(result[0]) if isinstance(result[0], str) else result[0]
+                # Parse the stored ISO format timestamp
+                timestamp_str = result[0]
+                if isinstance(timestamp_str, str):
+                    # Handle both with and without timezone info
+                    if timestamp_str.endswith('+00:00') or timestamp_str.endswith('Z'):
+                        timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    else:
+                        timestamp = datetime.fromisoformat(timestamp_str).replace(tzinfo=timezone.utc)
+                else:
+                    # Assume it's already a datetime object and make it UTC if needed
+                    timestamp = timestamp_str
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=timezone.utc)
+                
+                return timestamp.astimezone(timezone.utc)
             return None
         except sqlite3.Error as e:
             print(f"Database error getting earliest timestamp from {table_name}: {e}")

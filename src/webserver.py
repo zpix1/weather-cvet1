@@ -111,8 +111,11 @@ class WeatherWebServer:
                         temp_time = datetime.fromisoformat(temp_timestamp_str)
                     else:
                         temp_time = temp_timestamp_str
-                    # Database stores naive UTC timestamps
-                    temp_time = pytz.UTC.localize(temp_time)
+                    # Handle both timezone-aware and naive timestamps
+                    if temp_time.tzinfo is None:
+                        temp_time = pytz.UTC.localize(temp_time)
+                    else:
+                        temp_time = temp_time.astimezone(pytz.UTC)
                 
                 if humidity_result:
                     humidity_timestamp_str = humidity_result[1]
@@ -120,8 +123,11 @@ class WeatherWebServer:
                         humidity_time = datetime.fromisoformat(humidity_timestamp_str)
                     else:
                         humidity_time = humidity_timestamp_str
-                    # Database stores naive UTC timestamps
-                    humidity_time = pytz.UTC.localize(humidity_time)
+                    # Handle both timezone-aware and naive timestamps
+                    if humidity_time.tzinfo is None:
+                        humidity_time = pytz.UTC.localize(humidity_time)
+                    else:
+                        humidity_time = humidity_time.astimezone(pytz.UTC)
                 
                 # Use the most recent timestamp
                 latest_time = None
@@ -216,14 +222,18 @@ class WeatherWebServer:
             values = []
             
             for value, timestamp_str in results:
-                # Parse timestamp - database stores naive UTC timestamps
+                # Parse timestamp - handle both timezone-aware and naive timestamps
                 if isinstance(timestamp_str, str):
                     utc_time = datetime.fromisoformat(timestamp_str)
                 else:
                     utc_time = timestamp_str
                 
-                # Treat as UTC and add timezone info
-                utc_time = pytz.UTC.localize(utc_time)
+                # Handle both timezone-aware and naive timestamps
+                if utc_time.tzinfo is None:
+                    utc_time = pytz.UTC.localize(utc_time)
+                else:
+                    utc_time = utc_time.astimezone(pytz.UTC)
+                
                 local_time = utc_time.astimezone(self.tz)
                 
                 timestamps.append(local_time)

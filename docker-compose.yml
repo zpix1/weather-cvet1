@@ -9,7 +9,7 @@ services:
       - LOADER_MODE=continuous
       - PYTHONUNBUFFERED=1
     volumes:
-      - weather_data1:/app/data
+      - weather_data3:/app/data
     command: ["uv", "run", "python", "-u", "src/loader.py"]
     restart: unless-stopped
 
@@ -19,11 +19,11 @@ services:
       - FLASK_PORT=3300
       - PYTHONUNBUFFERED=1
     volumes:
-      - weather_data1:/app/data
+      - weather_data3:/app/data
     ports:
       - "3300:3300"
     command: ["uv", "run", "python", "-u", "src/webserver.py"]
     restart: unless-stopped
 
 volumes:
-  weather_data1:
+  weather_data3:
