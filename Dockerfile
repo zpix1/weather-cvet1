@@ -27,7 +27,6 @@ RUN addgroup -g 1001 -S appgroup && \
 # Change ownership of app directory including data directory
 RUN chown -R appuser:appgroup /app
 RUN chown -R appuser:appgroup /app/data
-RUN chmod -R 777 /app/data
 
 # Switch to non-root user
 USER appuser
