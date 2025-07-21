@@ -62,6 +62,7 @@ dist/
 
 # Database (will be created in container)
 *.db
+weather_data.db
 
 # Logs
-*.log 
+*.log

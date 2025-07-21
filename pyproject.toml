@@ -1,14 +1,9 @@
 [project]
 name = "weather-cvet1"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "apscheduler>=3.11.0",
-    "flask>=3.1.1",
-    "matplotlib>=3.7.0",
-    "pandas>=2.3.1",
-    "python-dotenv>=1.1.1",
-    "requests>=2.32.4",
+    "requests>=2.31.0",
+    "flask>=2.3.0",
+    "pytz>=2023.3"
 ]
