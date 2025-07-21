@@ -360,7 +360,7 @@ class WeatherWebServer:
 
     def generate_no_data_plot(self, message):
         """Generate a plot showing no data message."""
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 8))
         ax.text(0.5, 0.5, message, ha='center', va='center', fontsize=14)
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
