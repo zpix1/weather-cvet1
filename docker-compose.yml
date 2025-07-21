@@ -22,7 +22,7 @@ services:
       - weather_data3:/app/data
     ports:
       - "3300:3300"
-    command: ["uv", "run", "python", "-u", "src/webserver.py"]
+    command: ["uv", "run", "gunicorn", "--config", "src/gunicorn.conf.py", "src.wsgi:application"]
     restart: unless-stopped
 
 volumes:
