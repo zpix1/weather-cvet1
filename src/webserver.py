@@ -373,9 +373,38 @@ class WeatherWebServer:
         
         return img_buffer
 
+def get_client_ip():
+    """Get the real client IP address, considering proxy headers."""
+    # Check for X-Forwarded-For header (common with proxies/load balancers)
+    if 'X-Forwarded-For' in request.headers:
+        # X-Forwarded-For can contain multiple IPs, get the first one
+        return request.headers['X-Forwarded-For'].split(',')[0].strip()
+    # Check for X-Real-IP header (nginx proxy)
+    elif 'X-Real-IP' in request.headers:
+        return request.headers['X-Real-IP']
+    # Fallback to remote_addr
+    else:
+        return request.remote_addr
+
+def log_request_info():
+    """Log client IP and request headers."""
+    client_ip = get_client_ip()
+    print(f"\n=== Request Info ===")
+    print(f"Client IP: {client_ip}")
+    print(f"Remote Address: {request.remote_addr}")
+    print(f"Method: {request.method}")
+    print(f"URL: {request.url}")
+    print(f"User-Agent: {request.headers.get('User-Agent', 'N/A')}")
+    print(f"Headers:")
+    for header_name, header_value in request.headers:
+        print(f"  {header_name}: {header_value}")
+    print("===================\n")
+
 @app.route('/')
 def index():
     """Main route that displays the weather data."""
+    log_request_info()
+    
     server = WeatherWebServer()
     data = server.get_latest_data()
     
@@ -400,6 +429,8 @@ def index():
 @app.route('/plot/<data_type>')
 def plot(data_type):
     """Route that serves plots with period parameter."""
+    log_request_info()
+    
     server = WeatherWebServer()
     
     # Get period parameter
