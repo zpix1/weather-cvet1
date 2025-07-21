@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  weather-app:
+    build: .
+    container_name: weather-dashboard
+    ports:
+      - "3300:8080"
+    environment:
+      # Home Assistant Configuration (REQUIRED)
+      - HOME_ASSISTANT_TOKEN=${HOME_ASSISTANT_TOKEN}
+      - HOME_ASSISTANT_SENSOR=${HOME_ASSISTANT_SENSOR}
+      - HOME_ASSISTANT_SENSOR_HUMIDITY=${HOME_ASSISTANT_SENSOR_HUMIDITY}
+      - HOME_ASSISTANT_URL=${HOME_ASSISTANT_URL}
+
+      # Flask Configuration
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=8080
+      - FLASK_DEBUG=false
+
+      # Database and Update Configuration
+      - DATABASE_PATH=/app/data/weather_data.db
+      - UPDATE_INTERVAL=300
+    volumes:
+      # Persist database data
+      - weather_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import requests; requests.get('http://localhost:8080/api/weather/current', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  weather_data:
+    driver: local
