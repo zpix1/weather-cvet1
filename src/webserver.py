@@ -292,7 +292,7 @@ class WeatherWebServer:
         max_val = max(values)
         
         # Create the plot
-        fig, ax = plt.subplots(figsize=(12, 12))
+        fig, ax = plt.subplots(figsize=(12, 8))
         
         # Determine plot properties based on data type
         if data_type == 'temperature':
