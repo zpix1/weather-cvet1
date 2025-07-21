@@ -26,7 +26,8 @@ RUN addgroup -g 1001 -S appgroup && \
 
 # Change ownership of app directory including data directory
 RUN chown -R appuser:appgroup /app
-RUN chown -R appuser:appgroup /app/data/*
+RUN chown -R appuser:appgroup /app/data
+RUN chmod -R 777 /app/data
 
 # Switch to non-root user
 USER appuser
@@ -43,10 +44,6 @@ EXPOSE 3300
 COPY docker-entrypoint.sh /app/
 USER root
 RUN chmod +x /app/docker-entrypoint.sh
-
-RUN chown -R appuser:appgroup /app
-RUN chown -R appuser:appgroup /app/data
-
 USER appuser
 
 # Default command
