@@ -41,192 +41,6 @@ def index():
     return render_template("index.html", preset=preset, chart_type=chart_type)
 
 
-@app.route("/api/weather/current")
-def get_current_weather():
-    """Get the most recent weather data."""
-    try:
-        # Get recent data to find latest temperature and humidity
-        recent_data = db.get_recent_weather_data(hours=1, limit=100)
-
-        latest_data = {}
-        temp_data = None
-        humidity_data = None
-
-        # Find latest temperature and humidity readings
-        for record in recent_data:
-            if (
-                "temperatura" in record["entity_id"].lower()
-                and record["temperature"] is not None
-            ):
-                if not temp_data or record["timestamp"] > temp_data["timestamp"]:
-                    temp_data = record
-            elif (
-                "vlazhnost" in record["entity_id"].lower()
-                and record["humidity"] is not None
-            ):
-                if (
-                    not humidity_data
-                    or record["timestamp"] > humidity_data["timestamp"]
-                ):
-                    humidity_data = record
-
-        if temp_data or humidity_data:
-            if temp_data:
-                latest_data["temperature"] = temp_data["temperature"]
-                latest_data["timestamp"] = temp_data["timestamp"]
-            if humidity_data:
-                latest_data["humidity"] = humidity_data["humidity"]
-                if not latest_data.get("timestamp") or humidity_data[
-                    "timestamp"
-                ] > latest_data.get("timestamp", ""):
-                    latest_data["timestamp"] = humidity_data["timestamp"]
-
-            # Calculate time since last update with proper timezone handling
-            timestamp_str = latest_data["timestamp"]
-            if "Z" in timestamp_str:
-                timestamp_str = timestamp_str.replace("Z", "+00:00")
-
-            last_update = datetime.fromisoformat(timestamp_str)
-            # Convert to naive datetime in local timezone for proper comparison
-            if last_update.tzinfo is not None:
-                # Convert UTC to local time
-                import time
-
-                utc_offset = time.timezone if (time.daylight == 0) else time.altzone
-                local_offset = -utc_offset / 3600  # Convert to hours
-                last_update = last_update.replace(tzinfo=None) + timedelta(
-                    hours=local_offset
-                )
-
-            current_time = datetime.now()
-            time_diff = current_time - last_update
-            latest_data["time_since_update"] = {
-                "seconds": int(time_diff.total_seconds()),
-                "human_readable": format_time_diff(time_diff),
-            }
-
-            return jsonify({"success": True, "data": latest_data})
-        else:
-            return jsonify({"success": False, "error": "No weather data available"})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/weather/history")
-def get_weather_history():
-    """Get historical weather data for plotting."""
-    try:
-        # Get query parameters
-        hours = request.args.get("hours", 168, type=int)  # Default to 1 week
-        limit = request.args.get(
-            "limit", 5000, type=int
-        )  # Increased limit for month data
-        chart_type = request.args.get("type", "temperature")
-
-        # Allow up to 1 month of data
-        hours = min(hours, 720)  # Max 1 month (30 days)
-        limit = min(limit, 10000)  # Max 10000 records for month data
-
-        # Get data from database using the database layer
-        all_data = db.get_recent_weather_data(hours=hours, limit=limit)
-
-        # Filter data based on chart type
-        chart_data = []
-        for record in all_data:
-            if chart_type == "temperature":
-                if (
-                    "temperatura" in record["entity_id"].lower()
-                    and record["temperature"] is not None
-                ):
-                    chart_data.append(
-                        {
-                            "timestamp": record["timestamp"],
-                            "temperature": record["temperature"],
-                            "entity_id": record["entity_id"],
-                        }
-                    )
-            elif chart_type == "humidity":
-                if (
-                    "vlazhnost" in record["entity_id"].lower()
-                    and record["humidity"] is not None
-                ):
-                    chart_data.append(
-                        {
-                            "timestamp": record["timestamp"],
-                            "humidity": record["humidity"],
-                            "entity_id": record["entity_id"],
-                        }
-                    )
-
-        # Sort by timestamp ascending
-        chart_data.sort(key=lambda x: x["timestamp"])
-
-        return jsonify(
-            {
-                "success": True,
-                "data": chart_data,
-                "count": len(chart_data),
-                "hours": hours,
-            }
-        )
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/weather/forecast")
-def get_weather_forecast():
-    """Get weather forecast data."""
-    try:
-        forecast_json = db.get_metadata("latest_forecast")
-        if forecast_json:
-            forecast_data = json.loads(forecast_json)
-            return jsonify({"success": True, "data": forecast_data})
-        else:
-            return jsonify({"success": False, "error": "No forecast data available"})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/weather/chart-data")
-def get_chart_data():
-    """Get formatted data for Plotly charts."""
-    try:
-        hours = request.args.get("hours", 168, type=int)  # Default to 1 week
-        chart_type = request.args.get("type", "temperature")
-
-        # Get historical data with increased limit for month data
-        weather_data = db.get_recent_weather_data(hours=hours, limit=10000)
-
-        # Prepare data for Plotly
-        timestamps = []
-        values = []
-
-        for record in weather_data:
-            # Keep original timestamps - frontend will handle timezone conversion
-            timestamps.append(record["timestamp"])
-
-            if chart_type == "temperature":
-                values.append(record.get("temperature"))
-            elif chart_type == "humidity":
-                values.append(record.get("humidity"))
-
-        chart_data = {
-            "x": timestamps,
-            "y": values,
-            "type": chart_type,
-            "hours": hours,
-            "count": len(values),
-        }
-
-        return jsonify({"success": True, "data": chart_data})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-
 @app.route("/api/weather/chart/<preset>/<chart_type>.png")
 def get_weather_chart(preset, chart_type):
     """Generate and serve weather chart as PNG image."""
@@ -255,12 +69,9 @@ def get_weather_chart(preset, chart_type):
             try:
                 dt = datetime.fromisoformat(timestamp_str)
                 if dt.tzinfo is not None:
-                    # Convert UTC to local time
-                    import time
-
-                    utc_offset = time.timezone if (time.daylight == 0) else time.altzone
-                    local_offset = -utc_offset / 3600
-                    dt = dt.replace(tzinfo=None) + timedelta(hours=local_offset)
+                    # Convert UTC to Novosibirsk time (UTC+7)
+                    novosibirsk_offset = 7  # Novosibirsk is UTC+7
+                    dt = dt.replace(tzinfo=None) + timedelta(hours=novosibirsk_offset)
 
                 if chart_type == "temperature":
                     if (
@@ -312,19 +123,121 @@ def get_weather_chart(preset, chart_type):
                 ax.set_ylabel("Влажность (%)", fontsize=12)
                 chart_title = f"Влажность - {title}"
 
-            ax.set_title(chart_title, fontsize=14, fontweight="bold", pad=20)
+            ax.set_title(chart_title, fontsize=14, pad=20)
             ax.set_xlabel("Время", fontsize=12)
 
-            # Format x-axis
+            # Add vertical lines at 00:00 for each day
+            if timestamps:
+                # Calculate date range
+                start_date = min(timestamps).date()
+                end_date = max(timestamps).date()
+
+                # Add vertical lines at midnight for each day
+                current_date = start_date
+                while current_date <= end_date:
+                    midnight = datetime.combine(current_date, datetime.min.time())
+                    if min(timestamps) <= midnight <= max(timestamps):
+                        ax.axvline(
+                            x=midnight,
+                            color="gray",
+                            linestyle="--",
+                            alpha=0.5,
+                            linewidth=1,
+                        )
+                    current_date += timedelta(days=1)
+
+            # Format x-axis with custom tick locations and labels
             if hours <= 24:
-                ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                ax.xaxis.set_major_locator(mdates.HourLocator(interval=4))
+                # For 24h view, ensure midnight times are included as major ticks
+                midnight_times = []
+                regular_times = []
+
+                if timestamps:
+                    start_time = min(timestamps)
+                    end_time = max(timestamps)
+
+                    # Add midnight times within the range
+                    current_date = start_time.date()
+                    while current_date <= end_time.date():
+                        midnight = datetime.combine(current_date, datetime.min.time())
+                        if start_time <= midnight <= end_time:
+                            midnight_times.append(midnight)
+                        current_date += timedelta(days=1)
+
+                    # Add regular 4-hour interval times
+                    current_time = start_time.replace(minute=0, second=0, microsecond=0)
+                    current_time = current_time.replace(
+                        hour=(current_time.hour // 4) * 4
+                    )
+                    while current_time <= end_time:
+                        if current_time not in midnight_times:
+                            regular_times.append(current_time)
+                        current_time += timedelta(hours=4)
+
+                    # Combine and sort all tick locations
+                    all_ticks = sorted(midnight_times + regular_times)
+                    ax.set_xticks(all_ticks)
+
+                # Custom formatter that shows date at midnight, time otherwise
+                def custom_formatter_24h(x, pos):
+                    dt = mdates.num2date(x)
+                    if dt.hour == 0 and dt.minute == 0:
+                        return dt.strftime("%d.%m\n00:00")
+                    else:
+                        return dt.strftime("%H:%M")
+
+                ax.xaxis.set_major_formatter(plt.FuncFormatter(custom_formatter_24h))
+
             elif hours <= 72:
-                ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
-                ax.xaxis.set_major_locator(mdates.HourLocator(interval=12))
+                # For 3-day view, ensure midnight times are included as major ticks
+                midnight_times = []
+                regular_times = []
+
+                if timestamps:
+                    start_time = min(timestamps)
+                    end_time = max(timestamps)
+
+                    # Add midnight times within the range
+                    current_date = start_time.date()
+                    while current_date <= end_time.date():
+                        midnight = datetime.combine(current_date, datetime.min.time())
+                        if start_time <= midnight <= end_time:
+                            midnight_times.append(midnight)
+                        current_date += timedelta(days=1)
+
+                    # Add regular 12-hour interval times
+                    current_time = start_time.replace(minute=0, second=0, microsecond=0)
+                    current_time = current_time.replace(
+                        hour=(current_time.hour // 12) * 12
+                    )
+                    while current_time <= end_time:
+                        if current_time not in midnight_times:
+                            regular_times.append(current_time)
+                        current_time += timedelta(hours=12)
+
+                    # Combine and sort all tick locations
+                    all_ticks = sorted(midnight_times + regular_times)
+                    ax.set_xticks(all_ticks)
+
+                def custom_formatter_3d(x, pos):
+                    dt = mdates.num2date(x)
+                    if dt.hour == 0 and dt.minute == 0:
+                        return dt.strftime("%d.%m\n00:00")
+                    else:
+                        return dt.strftime("%H:%M")
+
+                ax.xaxis.set_major_formatter(plt.FuncFormatter(custom_formatter_3d))
+
             else:
-                ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
+                # For month view, use daily intervals with dates at midnight
                 ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+                ax.xaxis.set_minor_locator(mdates.DayLocator(interval=1))
+
+                def custom_formatter_month(x, pos):
+                    dt = mdates.num2date(x)
+                    return dt.strftime("%d.%m")
+
+                ax.xaxis.set_major_formatter(plt.FuncFormatter(custom_formatter_month))
 
             plt.xticks(rotation=45)
 
