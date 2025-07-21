@@ -15,7 +15,6 @@
         }
         h1 {
             text-align: center;
-            color: #333;
         }
         .sensor-data {
             display: flex;
@@ -39,13 +38,11 @@
         }
         .sensor-label {
             font-size: 1em;
-            color: #666;
         }
         .last-update {
             text-align: center;
             margin: 20px 0;
-            padding: 10px;
-            border: 1px solid #ddd;
+            font-size: 0.9em;
         }
         .status {
             text-align: center;
@@ -146,7 +143,7 @@
         </div>
         
         <div class="last-update">
-            Обновлено: <strong>{{ last_update }}</strong>
+            
         </div>
         
         <div style="text-align: center; margin: 20px 0;">
@@ -168,12 +165,12 @@
             </div>
             
             {% if not error %}
-            <img id="plot_image" src="/plot/{{ plot_type }}?period={{ period }}" alt="{{ plot_type|title }} Data - {{ period }}" style="max-width: 100%; height: auto; border: 1px solid #ddd;">
+            <img id="plot_image" src="/plot/{{ plot_type }}?period={{ period }}" alt="{{ plot_type|title }} Data - {{ period }}" style="max-width: 100%; height: auto;">
             {% endif %}
         </div>
         {% endif %}
         
-        <button class="refresh-btn" onclick="refreshPage()">Refresh Data</button>
+        <button class="refresh-btn" onclick="refreshPage()">Последнее показание: <strong title="{{ last_update_full }}">{{ last_update_relative or last_update }}</strong></button>
     </div>
 </body>
 </html>

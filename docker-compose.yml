@@ -9,7 +9,7 @@ services:
       - LOADER_MODE=continuous
       - PYTHONUNBUFFERED=1
     volumes:
-      - weather_data:/app/data
+      - weather_data1:/app/data
     command: ["uv", "run", "python", "-u", "src/loader.py"]
     restart: unless-stopped
 
@@ -26,4 +26,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  weather_data:
+  weather_data1:

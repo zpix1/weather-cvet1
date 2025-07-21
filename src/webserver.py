@@ -39,6 +39,35 @@ class WeatherWebServer:
         # Novosibirsk timezone
         self.tz = pytz.timezone('Asia/Novosibirsk')
     
+    def format_relative_time(self, timestamp):
+        """Format a timestamp as relative time (e.g., '5 minutes ago', '2 hours ago')."""
+        if not timestamp:
+            return None
+            
+        now = datetime.now(self.tz)
+        diff = now - timestamp
+        
+        # Handle future times (shouldn't happen, but just in case)
+        if diff.total_seconds() < 0:
+            return "только что"
+        
+        total_seconds = int(diff.total_seconds())
+        
+        if total_seconds < 60:
+            return f"{total_seconds} сек. назад" if total_seconds != 1 else "1 сек. назад"
+        elif total_seconds < 3600:  # Less than 1 hour
+            minutes = total_seconds // 60
+            return f"{minutes} мин. назад" if minutes != 1 else "1 мин. назад"
+        elif total_seconds < 86400:  # Less than 1 day
+            hours = total_seconds // 3600
+            return f"{hours} ч. назад" if hours != 1 else "1 ч. назад"
+        elif total_seconds < 2592000:  # Less than 30 days
+            days = total_seconds // 86400
+            return f"{days} дн. назад" if days != 1 else "1 дн. назад"
+        else:
+            months = total_seconds // 2592000
+            return f"{months} мес. назад" if months != 1 else "1 мес. назад"
+    
     def get_latest_data(self):
         """Fetch the latest temperature and humidity data from the database."""
         try:
@@ -106,13 +135,19 @@ class WeatherWebServer:
                 if latest_time:
                     local_time = latest_time.astimezone(self.tz)
                     last_update = local_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+                    last_update_relative = self.format_relative_time(local_time)
+                    last_update_full = last_update
                 else:
                     last_update = None
+                    last_update_relative = None
+                    last_update_full = None
                 
                 return {
                     'temperature': temperature,
                     'humidity': humidity,
                     'last_update': last_update,
+                    'last_update_relative': last_update_relative,
+                    'last_update_full': last_update_full,
                     'error': None
                 }
             else:
@@ -240,6 +275,12 @@ class WeatherWebServer:
         if not data:
             return self.generate_no_data_plot(f"No {data_type} data available for the selected period")
             
+        # Calculate statistics
+        values = data['values']
+        mean_val = sum(values) / len(values)
+        min_val = min(values)
+        max_val = max(values)
+        
         # Create the plot
         fig, ax = plt.subplots(figsize=(12, 6))
         
@@ -247,24 +288,34 @@ class WeatherWebServer:
         if data_type == 'temperature':
             color = 'red'
             ylabel = ''
+            unit = '°C'
         elif data_type == 'humidity':
             color = 'blue'
             ylabel = ''
+            unit = '%'
         else:
             color = 'black'
             ylabel = 'Значение'
+            unit = ''
         
         # translate to russian
         if data_type == 'temperature':
-            title = f'Температура, °C (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
+            title = f'Температура, {unit} (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
         elif data_type == 'humidity':
-            title = f'Влажность, % (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
+            title = f'Влажность, {unit} (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
 
         # Plot the data with horizontal connections between points
         ax.plot(data['timestamps'], data['values'], color=color, linewidth=2, drawstyle='steps-post')
+        
+        # Add horizontal lines for mean, min, max
+        ax.axhline(y=mean_val, color='orange', linestyle=':', alpha=1, linewidth=1, label=f'Среднее: {mean_val:.1f}{unit}')
+        ax.axhline(y=min_val, color='lightblue', linestyle='-', alpha=1, linewidth=1, label=f'Мин: {min_val:.1f}{unit}')
+        ax.axhline(y=max_val, color='lightcoral', linestyle='-', alpha=1, linewidth=1, label=f'Макс: {max_val:.1f}{unit}')
+        
         ax.set_ylabel(ylabel, fontsize=12)
         ax.set_title(title, fontsize=14)
         ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper right', fontsize=10)
         
         # Set x-axis limits to show the full date range with no gaps
         ax.set_xlim(start_date, end_date)
