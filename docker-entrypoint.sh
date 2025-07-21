@@ -4,6 +4,7 @@
 run_loader() {
     echo "Running loader to fetch sensor data..."
     export LOADER_MODE=once
+    ls -la .
     uv run python src/loader.py
 }
 
