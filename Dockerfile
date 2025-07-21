@@ -17,14 +17,17 @@ RUN uv sync --frozen
 # Create directory for database
 RUN mkdir -p /app/data
 
+# Copy entrypoint script and set permissions
+COPY docker-entrypoint.sh /app/
+RUN chmod +x /app/docker-entrypoint.sh
+
 # Create non-root user
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup
+RUN groupadd -g 1001 appgroup && \
+    useradd -u 1001 -g appgroup -m appuser
 
 # Change ownership of app directory including data directory
 RUN chown -R appuser:appgroup /app
-RUN chown -R appuser:appgroup /app/data
-RUN chmod -R 777 /app/data
+RUN chmod -R 755 /app/data
 
 # Switch to non-root user
 USER appuser
@@ -36,12 +39,6 @@ ENV DATABASE_PATH=/app/data/weather_data.db
 
 # Expose the port
 EXPOSE 3300
-
-# Create a script to run both loader and webserver
-COPY docker-entrypoint.sh /app/
-USER root
-RUN chmod +x /app/docker-entrypoint.sh
-USER appuser
 
 # Default command
 CMD ["/app/docker-entrypoint.sh"]
