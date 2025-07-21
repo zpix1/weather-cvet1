@@ -9,13 +9,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 import pytz
-from flask import Flask, render_template, send_file
+from flask import Flask, render_template, send_file, request
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import io
 import base64
+
+# Set matplotlib timezone to Novosibirsk
+matplotlib.rcParams['timezone'] = 'Asia/Novosibirsk'
 
 # Add the project root to the path
 project_root = Path(__file__).parent.parent
@@ -45,30 +48,71 @@ class WeatherWebServer:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
+            # Get latest temperature
             cursor.execute('''
-                SELECT temperature, humidity, timestamp
-                FROM sensor_data
-                ORDER BY timestamp DESC
+                SELECT value, timestamp
+                FROM temperature_data
+                ORDER BY datetime(timestamp) DESC
                 LIMIT 1
             ''')
+            temp_result = cursor.fetchone()
             
-            result = cursor.fetchone()
+            # Get latest humidity
+            cursor.execute('''
+                SELECT value, timestamp
+                FROM humidity_data
+                ORDER BY datetime(timestamp) DESC
+                LIMIT 1
+            ''')
+            humidity_result = cursor.fetchone()
+            
             conn.close()
             
-            if result:
-                temperature, humidity, timestamp_str = result
+            if temp_result or humidity_result:
+                temperature = round(temp_result[0], 1) if temp_result else None
+                humidity = round(humidity_result[0], 1) if humidity_result else None
                 
-                # Parse timestamp and convert to Novosibirsk timezone
-                utc_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                if utc_time.tzinfo is None:
-                    utc_time = pytz.UTC.localize(utc_time)
+                # Use the most recent timestamp for last_update
+                temp_time = None
+                humidity_time = None
                 
-                local_time = utc_time.astimezone(self.tz)
+                if temp_result:
+                    temp_timestamp_str = temp_result[1]
+                    if isinstance(temp_timestamp_str, str):
+                        temp_time = datetime.fromisoformat(temp_timestamp_str)
+                    else:
+                        temp_time = temp_timestamp_str
+                    # Database stores naive UTC timestamps
+                    temp_time = pytz.UTC.localize(temp_time)
+                
+                if humidity_result:
+                    humidity_timestamp_str = humidity_result[1]
+                    if isinstance(humidity_timestamp_str, str):
+                        humidity_time = datetime.fromisoformat(humidity_timestamp_str)
+                    else:
+                        humidity_time = humidity_timestamp_str
+                    # Database stores naive UTC timestamps
+                    humidity_time = pytz.UTC.localize(humidity_time)
+                
+                # Use the most recent timestamp
+                latest_time = None
+                if temp_time and humidity_time:
+                    latest_time = max(temp_time, humidity_time)
+                elif temp_time:
+                    latest_time = temp_time
+                elif humidity_time:
+                    latest_time = humidity_time
+                
+                if latest_time:
+                    local_time = latest_time.astimezone(self.tz)
+                    last_update = local_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+                else:
+                    last_update = None
                 
                 return {
-                    'temperature': round(temperature, 1),
-                    'humidity': round(humidity, 1),
-                    'last_update': local_time.strftime('%Y-%m-%d %H:%M:%S %Z'),
+                    'temperature': temperature,
+                    'humidity': humidity,
+                    'last_update': last_update,
                     'error': None
                 }
             else:
@@ -80,36 +124,52 @@ class WeatherWebServer:
                 }
                 
         except sqlite3.Error as e:
+            # Log the actual error for debugging but don't expose details to users
+            print(f"Database error in get_latest_data: {e}")
             return {
                 'temperature': None,
                 'humidity': None,
                 'last_update': None,
-                'error': f'Database error: {e}'
+                'error': 'Database connection error. Please try again later.'
             }
         except Exception as e:
+            # Log the actual error for debugging but don't expose details to users
+            print(f"Error in get_latest_data: {e}")
             return {
                 'temperature': None,
                 'humidity': None,
                 'last_update': None,
-                'error': f'Error: {e}'
+                'error': 'An error occurred while retrieving data. Please try again later.'
             }
     
-    def get_24h_data(self):
-        """Fetch the last 24 hours of temperature and humidity data."""
+    def get_data_by_date_range(self, data_type, start_date, end_date):
+        """Fetch temperature or humidity data for a specific date range."""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Get data from the last 24 hours
-            now = datetime.now(self.tz)
-            yesterday = now - timedelta(hours=24)
+            # Validate and determine which table to query
+            if data_type not in ['temperature', 'humidity']:
+                raise ValueError(f"Invalid data_type: {data_type}")
             
-            cursor.execute('''
-                SELECT temperature, humidity, timestamp
-                FROM sensor_data
-                WHERE datetime(timestamp) >= datetime(?)
-                ORDER BY timestamp ASC
-            ''', (yesterday.astimezone(pytz.UTC).isoformat(),))
+            table_name = f"{data_type}_data"
+            
+            # Convert timezone-aware dates to UTC for database comparison
+            # Database stores naive UTC timestamps
+            start_utc = start_date.astimezone(pytz.UTC).replace(tzinfo=None)
+            end_utc = end_date.astimezone(pytz.UTC).replace(tzinfo=None)
+
+            print(f"Fetching {data_type} data from {start_utc} to {end_utc} in table {table_name}")
+            
+            # Use safe string formatting for table name since SQLite doesn't support parameterized table names
+            # Use SQLite datetime() function for proper timestamp comparison
+            query = f'''
+                SELECT value, timestamp
+                FROM {table_name}
+                WHERE datetime(timestamp) >= datetime(?) AND datetime(timestamp) <= datetime(?)
+                ORDER BY datetime(timestamp) ASC
+            '''
+            cursor.execute(query, (start_utc.isoformat(), end_utc.isoformat()))
             
             results = cursor.fetchall()
             conn.close()
@@ -118,62 +178,133 @@ class WeatherWebServer:
                 return None
                 
             timestamps = []
-            temperatures = []
-            humidities = []
+            values = []
             
-            for temp, hum, timestamp_str in results:
-                # Parse timestamp and convert to local timezone
-                utc_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                if utc_time.tzinfo is None:
-                    utc_time = pytz.UTC.localize(utc_time)
+            for value, timestamp_str in results:
+                # Parse timestamp - database stores naive UTC timestamps
+                if isinstance(timestamp_str, str):
+                    utc_time = datetime.fromisoformat(timestamp_str)
+                else:
+                    utc_time = timestamp_str
+                
+                # Treat as UTC and add timezone info
+                utc_time = pytz.UTC.localize(utc_time)
                 local_time = utc_time.astimezone(self.tz)
                 
                 timestamps.append(local_time)
-                temperatures.append(temp)
-                humidities.append(hum)
+                values.append(value)
+            
+            # Extend the plot to the current time with the last known value
+            if timestamps and values:
+                last_timestamp = timestamps[-1]
+                last_value = values[-1]
+                
+                # If the last data point is before the end time, add a point at end time
+                if last_timestamp < end_date:
+                    timestamps.append(end_date)
+                    values.append(last_value)
             
             return {
                 'timestamps': timestamps,
-                'temperatures': temperatures,
-                'humidities': humidities
+                'values': values
             }
             
         except Exception as e:
-            print(f"Error fetching 24h data: {e}")
+            # Log the actual error for debugging but don't expose details to users
+            print(f"Error fetching {data_type} data: {e}")
             return None
     
-    def generate_plot(self):
-        """Generate a plot of the last 24 hours data."""
-        data = self.get_24h_data()
+    def get_date_range_for_period(self, period):
+        """Get start and end dates for a given period."""
+        # Validate period parameter
+        if period not in ['24h', 'week', 'month']:
+            period = '24h'  # Default to safe value
+            
+        now = datetime.now(self.tz)
+        
+        if period == '24h':
+            start_date = now - timedelta(hours=24)
+        elif period == 'week':
+            start_date = now - timedelta(days=7)
+        elif period == 'month':
+            start_date = now - timedelta(days=30)
+        else:
+            # Default to 24 hours (should not reach here due to validation above)
+            start_date = now - timedelta(hours=24)
+        
+        return start_date, now
+
+    def generate_plot(self, data_type, start_date, end_date):
+        """Generate a plot for the specified data type and date range."""
+        data = self.get_data_by_date_range(data_type, start_date, end_date)
         if not data:
-            return None
+            return self.generate_no_data_plot(f"No {data_type} data available for the selected period")
             
         # Create the plot
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-        fig.suptitle('Weather Data - Last 24 Hours', fontsize=16, fontweight='bold')
+        fig, ax = plt.subplots(figsize=(12, 6))
         
-        # Temperature plot
-        ax1.plot(data['timestamps'], data['temperatures'], 'r-', linewidth=2, label='Temperature')
-        ax1.set_ylabel('Temperature (°C)', fontsize=12)
-        ax1.grid(True, alpha=0.3)
-        ax1.set_title('Temperature', fontsize=14)
+        # Determine plot properties based on data type
+        if data_type == 'temperature':
+            color = 'red'
+            ylabel = ''
+        elif data_type == 'humidity':
+            color = 'blue'
+            ylabel = ''
+        else:
+            color = 'black'
+            ylabel = 'Значение'
         
-        # Humidity plot
-        ax2.plot(data['timestamps'], data['humidities'], 'b-', linewidth=2, label='Humidity')
-        ax2.set_ylabel('Humidity (%)', fontsize=12)
-        ax2.set_xlabel('Time', fontsize=12)
-        ax2.grid(True, alpha=0.3)
-        ax2.set_title('Humidity', fontsize=14)
+        # translate to russian
+        if data_type == 'temperature':
+            title = f'Температура, °C (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
+        elif data_type == 'humidity':
+            title = f'Влажность, % (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
+
+        # Plot the data with horizontal connections between points
+        ax.plot(data['timestamps'], data['values'], color=color, linewidth=2, drawstyle='steps-post')
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(title, fontsize=14)
+        ax.grid(True, alpha=0.3)
         
-        # Format x-axis
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        ax2.xaxis.set_major_locator(mdates.HourLocator(interval=4))
-        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
+        # Set x-axis limits to show the full date range with no gaps
+        ax.set_xlim(start_date, end_date)
+        
+        # Format x-axis based on date range
+        date_diff = (end_date - start_date).days
+        if date_diff <= 1:
+            # Less than or equal to 1 day - show hours
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+            ax.xaxis.set_major_locator(mdates.HourLocator(interval=max(1, date_diff * 4)))
+        elif date_diff <= 7:
+            # 1-7 days - show days and hours
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+        else:
+            # More than 7 days - show just dates
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, date_diff // 7)))
+        
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
         
         # Adjust layout
         plt.tight_layout()
         
         # Save to bytes
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close()
+        
+        return img_buffer
+
+    def generate_no_data_plot(self, message):
+        """Generate a plot showing no data message."""
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, message, ha='center', va='center', fontsize=14)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+        
         img_buffer = io.BytesIO()
         plt.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
         img_buffer.seek(0)
@@ -187,35 +318,47 @@ def index():
     server = WeatherWebServer()
     data = server.get_latest_data()
     
-    # Add plot URL if data is available
-    if not data.get('error'):
-        data['plot_url'] = '/plot'
+    # Get plot parameters from query string
+    plot_type = request.args.get('plot_type', 'temperature')
+    period = request.args.get('period', '24h')
+    
+    # Validate plot_type parameter
+    if plot_type not in ['temperature', 'humidity']:
+        plot_type = 'temperature'  # Default to safe value
+    
+    # Validate period parameter
+    if period not in ['24h', 'week', 'month']:
+        period = '24h'  # Default to safe value
+    
+    # Add plot parameters to template data
+    data['plot_type'] = plot_type
+    data['period'] = period
     
     return render_template('index.html', **data)
 
-@app.route('/plot')
-def plot():
-    """Route that serves the 24-hour plot."""
+@app.route('/plot/<data_type>')
+def plot(data_type):
+    """Route that serves plots with period parameter."""
     server = WeatherWebServer()
-    plot_buffer = server.generate_plot()
     
-    if plot_buffer:
-        return send_file(plot_buffer, mimetype='image/png')
-    else:
-        # Return a simple "no data" image
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.text(0.5, 0.5, 'No data available for the last 24 hours', 
-                ha='center', va='center', fontsize=14)
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis('off')
-        
-        img_buffer = io.BytesIO()
-        plt.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
-        img_buffer.seek(0)
-        plt.close()
-        
-        return send_file(img_buffer, mimetype='image/png')
+    # Get period parameter
+    period = request.args.get('period', '24h')
+    
+    # Validate period parameter
+    if period not in ['24h', 'week', 'month']:
+        period = '24h'  # Default to safe value
+    
+    # Validate data type
+    if data_type not in ['temperature', 'humidity']:
+        return "Invalid data type. Use 'temperature' or 'humidity'", 400
+    
+    # Get date range for the period
+    start_date, end_date = server.get_date_range_for_period(period)
+    
+    # Generate plot
+    plot_buffer = server.generate_plot(data_type, start_date, end_date)
+    
+    return send_file(plot_buffer, mimetype='image/png')
 
 def main():
     """Main function to run the web server."""

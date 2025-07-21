@@ -1,17 +1,28 @@
 services:
-  weather-app:
+  weather-fetcher:
     build: .
     environment:
-      - MODE=both
       - HOME_ASSISTANT_TOKEN=${HOME_ASSISTANT_TOKEN}
       - HOME_ASSISTANT_SENSOR_TEMPERATURE=${HOME_ASSISTANT_SENSOR_TEMPERATURE}
       - HOME_ASSISTANT_API_BASE=${HOME_ASSISTANT_API_BASE}
       - HOME_ASSISTANT_SENSOR_HUMIDITY=${HOME_ASSISTANT_SENSOR_HUMIDITY}
-      - FLASK_PORT=3300
+      - LOADER_MODE=continuous
+      - PYTHONUNBUFFERED=1
     volumes:
       - weather_data:/app/data
+    command: ["uv", "run", "python", "-u", "src/loader.py"]
+    restart: unless-stopped
+
+  weather-webserver:
+    build: .
+    environment:
+      - FLASK_PORT=3300
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - weather_data1:/app/data
     ports:
       - "3300:3300"
+    command: ["uv", "run", "python", "-u", "src/webserver.py"]
     restart: unless-stopped
 
 volumes:

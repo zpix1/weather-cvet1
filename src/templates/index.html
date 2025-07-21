@@ -84,11 +84,50 @@
         setTimeout(function() {
             location.reload();
         }, 300000);
+        
+        // Auto-update plot when controls change
+        function updatePlot() {
+            const plotType = document.getElementById('plot_type').value;
+            const period = document.getElementById('period').value;
+            const plotImg = document.getElementById('plot_image');
+            plotImg.src = `/plot/${plotType}?period=${period}`;
+            
+            // Update URL parameters without reloading the page
+            updateUrlParameters(plotType, period);
+        }
+        
+        // Update URL parameters in the browser address bar
+        function updateUrlParameters(plotType, period) {
+            const url = new URL(window.location);
+            url.searchParams.set('plot_type', plotType);
+            url.searchParams.set('period', period);
+            
+            // Update the browser's address bar without reloading the page
+            window.history.pushState({}, '', url);
+        }
+        
+        // Handle browser back/forward buttons
+        window.addEventListener('popstate', function(event) {
+            // Get current URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const plotType = urlParams.get('plot_type') || 'temperature';
+            const period = urlParams.get('period') || '24h';
+            
+            // Update select elements to match URL
+            document.getElementById('plot_type').value = plotType;
+            document.getElementById('period').value = period;
+            
+            // Update the plot image
+            const plotImg = document.getElementById('plot_image');
+            if (plotImg) {
+                plotImg.src = `/plot/${plotType}?period=${period}`;
+            }
+        });
     </script>
 </head>
 <body>
     <div class="container">
-        <h1>Weather Monitor</h1>
+        <h1>Температура на Цветном</h1>
         
         {% if error %}
         <div class="status error">
@@ -98,24 +137,40 @@
         <div class="sensor-data">
             <div class="sensor-item temperature">
                 <div class="sensor-value">{{ temperature }}°C</div>
-                <div class="sensor-label">Temperature</div>
+                <div class="sensor-label">Температура</div>
             </div>
             <div class="sensor-item humidity">
                 <div class="sensor-value">{{ humidity }}%</div>
-                <div class="sensor-label">Humidity</div>
+                <div class="sensor-label">Влажность</div>
             </div>
         </div>
         
         <div class="last-update">
-            Last Update: <strong>{{ last_update }}</strong>
+            Обновлено: <strong>{{ last_update }}</strong>
         </div>
         
-        {% if plot_url %}
         <div style="text-align: center; margin: 20px 0;">
-            <h3>Last 24 Hours</h3>
-            <img src="{{ plot_url }}" alt="24 Hour Weather Data" style="max-width: 100%; height: auto; border: 1px solid #ddd;">
+            <div style="margin: 15px 0;">
+                <div style="margin: 10px 0;">
+                    <label for="plot_type" style="margin-right: 10px;">Тип:</label>
+                    <select name="plot_type" id="plot_type" style="padding: 5px; margin-right: 20px;" onchange="updatePlot()">
+                        <option value="temperature" {% if plot_type == 'temperature' %}selected{% endif %}>Температура</option>
+                        <option value="humidity" {% if plot_type == 'humidity' %}selected{% endif %}>Влажность</option>
+                    </select>
+                    
+                    <label for="period" style="margin-right: 10px;">Период:</label>
+                    <select name="period" id="period" style="padding: 5px; margin-right: 20px;" onchange="updatePlot()">
+                        <option value="24h" {% if period == '24h' %}selected{% endif %}>Последние 24 часа</option>
+                        <option value="week" {% if period == 'week' %}selected{% endif %}>Последняя неделя</option>
+                        <option value="month" {% if period == 'month' %}selected{% endif %}>Последний месяц</option>
+                    </select>
+                </div>
+            </div>
+            
+            {% if not error %}
+            <img id="plot_image" src="/plot/{{ plot_type }}?period={{ period }}" alt="{{ plot_type|title }} Data - {{ period }}" style="max-width: 100%; height: auto; border: 1px solid #ddd;">
+            {% endif %}
         </div>
-        {% endif %}
         {% endif %}
         
         <button class="refresh-btn" onclick="refreshPage()">Refresh Data</button>

@@ -17,10 +17,6 @@ RUN uv sync --frozen
 # Create directory for database
 RUN mkdir -p /app/data
 
-# Copy entrypoint script and set permissions
-COPY docker-entrypoint.sh /app/
-RUN chmod +x /app/docker-entrypoint.sh
-
 # Create non-root user
 RUN groupadd -g 1001 appgroup && \
     useradd -u 1001 -g appgroup -m appuser
@@ -39,6 +35,3 @@ ENV DATABASE_PATH=/app/data/weather_data.db
 
 # Expose the port
 EXPOSE 3300
-
-# Default command
-CMD ["/app/docker-entrypoint.sh"]
