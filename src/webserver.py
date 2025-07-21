@@ -5,11 +5,17 @@ Web server that displays current temperature and humidity data from SQLite datab
 
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 import pytz
-from flask import Flask, render_template
+from flask import Flask, render_template, send_file
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import io
+import base64
 
 # Add the project root to the path
 project_root = Path(__file__).parent.parent
@@ -87,6 +93,93 @@ class WeatherWebServer:
                 'last_update': None,
                 'error': f'Error: {e}'
             }
+    
+    def get_24h_data(self):
+        """Fetch the last 24 hours of temperature and humidity data."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get data from the last 24 hours
+            now = datetime.now(self.tz)
+            yesterday = now - timedelta(hours=24)
+            
+            cursor.execute('''
+                SELECT temperature, humidity, timestamp
+                FROM sensor_data
+                WHERE datetime(timestamp) >= datetime(?)
+                ORDER BY timestamp ASC
+            ''', (yesterday.astimezone(pytz.UTC).isoformat(),))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            if not results:
+                return None
+                
+            timestamps = []
+            temperatures = []
+            humidities = []
+            
+            for temp, hum, timestamp_str in results:
+                # Parse timestamp and convert to local timezone
+                utc_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                if utc_time.tzinfo is None:
+                    utc_time = pytz.UTC.localize(utc_time)
+                local_time = utc_time.astimezone(self.tz)
+                
+                timestamps.append(local_time)
+                temperatures.append(temp)
+                humidities.append(hum)
+            
+            return {
+                'timestamps': timestamps,
+                'temperatures': temperatures,
+                'humidities': humidities
+            }
+            
+        except Exception as e:
+            print(f"Error fetching 24h data: {e}")
+            return None
+    
+    def generate_plot(self):
+        """Generate a plot of the last 24 hours data."""
+        data = self.get_24h_data()
+        if not data:
+            return None
+            
+        # Create the plot
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+        fig.suptitle('Weather Data - Last 24 Hours', fontsize=16, fontweight='bold')
+        
+        # Temperature plot
+        ax1.plot(data['timestamps'], data['temperatures'], 'r-', linewidth=2, label='Temperature')
+        ax1.set_ylabel('Temperature (°C)', fontsize=12)
+        ax1.grid(True, alpha=0.3)
+        ax1.set_title('Temperature', fontsize=14)
+        
+        # Humidity plot
+        ax2.plot(data['timestamps'], data['humidities'], 'b-', linewidth=2, label='Humidity')
+        ax2.set_ylabel('Humidity (%)', fontsize=12)
+        ax2.set_xlabel('Time', fontsize=12)
+        ax2.grid(True, alpha=0.3)
+        ax2.set_title('Humidity', fontsize=14)
+        
+        # Format x-axis
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax2.xaxis.set_major_locator(mdates.HourLocator(interval=4))
+        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
+        
+        # Adjust layout
+        plt.tight_layout()
+        
+        # Save to bytes
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close()
+        
+        return img_buffer
 
 @app.route('/')
 def index():
@@ -94,7 +187,35 @@ def index():
     server = WeatherWebServer()
     data = server.get_latest_data()
     
+    # Add plot URL if data is available
+    if not data.get('error'):
+        data['plot_url'] = '/plot'
+    
     return render_template('index.html', **data)
+
+@app.route('/plot')
+def plot():
+    """Route that serves the 24-hour plot."""
+    server = WeatherWebServer()
+    plot_buffer = server.generate_plot()
+    
+    if plot_buffer:
+        return send_file(plot_buffer, mimetype='image/png')
+    else:
+        # Return a simple "no data" image
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, 'No data available for the last 24 hours', 
+                ha='center', va='center', fontsize=14)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+        
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close()
+        
+        return send_file(img_buffer, mimetype='image/png')
 
 def main():
     """Main function to run the web server."""

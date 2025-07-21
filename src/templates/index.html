@@ -110,9 +110,12 @@
             Last Update: <strong>{{ last_update }}</strong>
         </div>
         
-        <div class="status success">
-            System Online
+        {% if plot_url %}
+        <div style="text-align: center; margin: 20px 0;">
+            <h3>Last 24 Hours</h3>
+            <img src="{{ plot_url }}" alt="24 Hour Weather Data" style="max-width: 100%; height: auto; border: 1px solid #ddd;">
         </div>
+        {% endif %}
         {% endif %}
         
         <button class="refresh-btn" onclick="refreshPage()">Refresh Data</button>
