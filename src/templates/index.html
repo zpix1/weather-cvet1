@@ -153,6 +153,7 @@
                     <select name="plot_type" id="plot_type" style="padding: 5px; margin-right: 20px;" onchange="updatePlot()">
                         <option value="temperature" {% if plot_type == 'temperature' %}selected{% endif %}>Температура</option>
                         <option value="humidity" {% if plot_type == 'humidity' %}selected{% endif %}>Влажность</option>
+                        <option value="temp_hum" {% if plot_type == 'temp_hum' %}selected{% endif %}>Температура и влажность</option>
                     </select>
                     
                     <label for="period" style="margin-right: 10px;">Период:</label>

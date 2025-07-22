@@ -38,6 +38,100 @@ class WeatherWebServer:
             self.db_path = project_root / 'weather_data.db'
         # Novosibirsk timezone
         self.tz = pytz.timezone('Asia/Novosibirsk')
+        # Initialize user requests table
+        self._init_user_requests_table()
+    
+    def _init_user_requests_table(self):
+        """Initialize the user_requests table if it doesn't exist."""
+        try:
+            # Ensure the directory exists
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME NOT NULL,
+                    ip_address TEXT NOT NULL,
+                    method TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    user_agent TEXT,
+                    referer TEXT
+                )
+            ''')
+            
+            # Create index for faster queries by timestamp and IP
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_requests_timestamp 
+                ON user_requests(timestamp)
+            ''')
+            
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_requests_ip_date 
+                ON user_requests(ip_address, date(timestamp))
+            ''')
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            print(f"Error initializing user_requests table: {e}")
+    
+    def log_user_request(self, ip_address, method, url, user_agent=None, referer=None):
+        """Log a user request to the database."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Use UTC timestamp for consistency
+            timestamp = datetime.now(pytz.UTC).isoformat()
+            
+            cursor.execute('''
+                INSERT INTO user_requests (timestamp, ip_address, method, url, user_agent, referer)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (timestamp, ip_address, method, url, user_agent, referer))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            print(f"Error logging user request: {e}")
+    
+    def get_daily_visitor_stats(self, days=30):
+        """Get daily visitor statistics for the last N days."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get visitor stats grouped by date
+            cursor.execute('''
+                SELECT 
+                    date(datetime(timestamp, 'localtime')) as visit_date,
+                    COUNT(DISTINCT ip_address) as unique_visitors,
+                    COUNT(*) as total_requests
+                FROM user_requests
+                WHERE datetime(timestamp) >= datetime('now', '-{} days')
+                GROUP BY date(datetime(timestamp, 'localtime'))
+                ORDER BY visit_date DESC
+            '''.format(days))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [
+                {
+                    'date': result[0],
+                    'unique_visitors': result[1],
+                    'total_requests': result[2]
+                }
+                for result in results
+            ]
+            
+        except Exception as e:
+            print(f"Error getting daily visitor stats: {e}")
+            return []
     
     def format_relative_time(self, timestamp):
         """Format a timestamp as relative time (e.g., '5 minutes ago', '2 hours ago')."""
@@ -279,54 +373,8 @@ class WeatherWebServer:
         
         return start_date, now
 
-    def generate_plot(self, data_type, start_date, end_date):
-        """Generate a plot for the specified data type and date range."""
-        data = self.get_data_by_date_range(data_type, start_date, end_date)
-        if not data:
-            return self.generate_no_data_plot(f"N/A")
-            
-        # Calculate statistics
-        values = data['values']
-        mean_val = sum(values) / len(values)
-        min_val = min(values)
-        max_val = max(values)
-        
-        # Create the plot
-        fig, ax = plt.subplots(figsize=(12, 8))
-        
-        # Determine plot properties based on data type
-        if data_type == 'temperature':
-            color = 'red'
-            ylabel = ''
-            unit = '°C'
-        elif data_type == 'humidity':
-            color = 'blue'
-            ylabel = ''
-            unit = '%'
-        else:
-            color = 'black'
-            ylabel = 'Значение'
-            unit = ''
-        
-        # translate to russian
-        if data_type == 'temperature':
-            title = f'Температура, {unit} (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
-        elif data_type == 'humidity':
-            title = f'Влажность, {unit} (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
-
-        # Plot the data with horizontal connections between points
-        ax.plot(data['timestamps'], data['values'], color=color, linewidth=2, drawstyle='steps-post')
-        
-        # Add horizontal lines for mean, min, max
-        ax.axhline(y=mean_val, color='orange', linestyle=':', alpha=1, linewidth=1, label=f'Среднее: {mean_val:.1f}{unit}')
-        ax.axhline(y=min_val, color='lightblue', linestyle='-', alpha=1, linewidth=1, label=f'Мин: {min_val:.1f}{unit}')
-        ax.axhline(y=max_val, color='lightcoral', linestyle='-', alpha=1, linewidth=1, label=f'Макс: {max_val:.1f}{unit}')
-        
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.set_title(title, fontsize=14)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper right', fontsize=10)
-        
+    def _format_plot_axis(self, ax, start_date, end_date):
+        """Format x-axis for plots with proper date/time formatting."""
         # Set x-axis limits to show the full date range with no gaps
         ax.set_xlim(start_date, end_date)
         
@@ -346,17 +394,135 @@ class WeatherWebServer:
             ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, date_diff // 7)))
         
         plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
-        
-        # Adjust layout
+
+    def _save_plot_to_buffer(self, fig):
+        """Save matplotlib figure to bytes buffer."""
         plt.tight_layout()
-        
-        # Save to bytes
         img_buffer = io.BytesIO()
         plt.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
         img_buffer.seek(0)
         plt.close()
-        
         return img_buffer
+
+    def generate_plot(self, data_type, start_date, end_date):
+        """Generate a plot for the specified data type and date range."""
+        if data_type == 'temp_hum':
+            return self.generate_combined_plot(start_date, end_date)
+        
+        data = self.get_data_by_date_range(data_type, start_date, end_date)
+        if not data:
+            return self.generate_no_data_plot(f"N/A")
+            
+        # Calculate statistics
+        values = data['values']
+        mean_val = sum(values) / len(values)
+        min_val = min(values)
+        max_val = max(values)
+        
+        # Create the plot
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Determine plot properties based on data type
+        if data_type == 'temperature':
+            color = 'red'
+            ylabel = ''
+            unit = '°C'
+            title = f'Температура, {unit} (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
+        elif data_type == 'humidity':
+            color = 'blue'
+            ylabel = ''
+            unit = '%'
+            title = f'Влажность, {unit} (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
+        else:
+            color = 'black'
+            ylabel = 'Значение'
+            unit = ''
+            title = f'{data_type} (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
+
+        # Plot the data with horizontal connections between points
+        ax.plot(data['timestamps'], data['values'], color=color, linewidth=2, drawstyle='steps-post')
+        
+        # Add horizontal lines for mean, min, max
+        ax.axhline(y=mean_val, color='orange', linestyle=':', alpha=1, linewidth=1, label=f'Среднее: {mean_val:.1f}{unit}')
+        ax.axhline(y=min_val, color='lightblue', linestyle='-', alpha=1, linewidth=1, label=f'Мин: {min_val:.1f}{unit}')
+        ax.axhline(y=max_val, color='lightcoral', linestyle='-', alpha=1, linewidth=1, label=f'Макс: {max_val:.1f}{unit}')
+        
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(title, fontsize=14)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper right', fontsize=10)
+        
+        # Format axis and save
+        self._format_plot_axis(ax, start_date, end_date)
+        return self._save_plot_to_buffer(fig)
+
+    def generate_combined_plot(self, start_date, end_date):
+        """Generate a combined plot showing both temperature and humidity."""
+        # Get data for both temperature and humidity
+        temp_data = self.get_data_by_date_range('temperature', start_date, end_date)
+        humidity_data = self.get_data_by_date_range('humidity', start_date, end_date)
+        
+        if not temp_data and not humidity_data:
+            return self.generate_no_data_plot("Нет данных для отображения")
+        
+        # Create the plot with dual y-axes
+        fig, ax1 = plt.subplots(figsize=(12, 8))
+        ax2 = ax1.twinx()
+        
+        # Plot humidity first (so it appears below temperature visually)
+        if humidity_data:
+            humidity_values = humidity_data['values']
+            humidity_mean = sum(humidity_values) / len(humidity_values)
+            
+            ax2.plot(humidity_data['timestamps'], humidity_values, 
+                    color='lightblue', linewidth=1, drawstyle='steps-post', 
+                    alpha=0.7, label=f'Влажность (сред: {humidity_mean:.1f}%)')
+            
+            ax2.set_ylabel('Влажность, %', color='blue', fontsize=12)
+            ax2.tick_params(axis='y', labelcolor='blue')
+            
+            # Set humidity y-axis limits to create visual hierarchy
+            humidity_min, humidity_max = min(humidity_values), max(humidity_values)
+            humidity_range = humidity_max - humidity_min
+            ax2.set_ylim(humidity_min - humidity_range * 0.1, humidity_max + humidity_range * 0.1)
+        
+        # Plot temperature on top (visually dominant)
+        if temp_data:
+            temp_values = temp_data['values']
+            temp_mean = sum(temp_values) / len(temp_values)
+            
+            ax1.plot(temp_data['timestamps'], temp_values, 
+                    color='red', linewidth=1, drawstyle='steps-post', 
+                    label=f'Температура (сред: {temp_mean:.1f}°C)')
+            
+            ax1.set_ylabel('Температура, °C', color='red', fontsize=12)
+            ax1.tick_params(axis='y', labelcolor='red')
+            
+            # Set temperature y-axis limits
+            temp_min, temp_max = min(temp_values), max(temp_values)
+            temp_range = temp_max - temp_min
+            ax1.set_ylim(temp_min - temp_range * 0.1, temp_max + temp_range * 0.1)
+        
+        # Set title
+        title = f'Температура и влажность (с {start_date.strftime("%Y-%m-%d")} до {end_date.strftime("%Y-%m-%d")})'
+        ax1.set_title(title, fontsize=14)
+        
+        # Add grid and legend
+        ax1.grid(True, alpha=0.3)
+        
+        # Combine legends from both axes, with temperature first
+        lines1 = ax1.get_lines()
+        lines2 = ax2.get_lines()
+        labels1 = [l.get_label() for l in lines1]
+        labels2 = [l.get_label() for l in lines2]
+        
+        if lines1 or lines2:
+            # Put temperature legend first (top), then humidity (bottom)
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=10)
+        
+        # Format axis and save using shared methods
+        self._format_plot_axis(ax1, start_date, end_date)
+        return self._save_plot_to_buffer(fig)
 
     def generate_no_data_plot(self, message):
         """Generate a plot showing no data message."""
@@ -366,12 +532,7 @@ class WeatherWebServer:
         ax.set_ylim(0, 1)
         ax.axis('off')
         
-        img_buffer = io.BytesIO()
-        plt.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
-        img_buffer.seek(0)
-        plt.close()
-        
-        return img_buffer
+        return self._save_plot_to_buffer(fig)
 
 def get_client_ip():
     """Get the real client IP address, considering proxy headers."""
@@ -389,16 +550,14 @@ def get_client_ip():
 def log_request_info():
     """Log client IP and request headers."""
     client_ip = get_client_ip()
-    print(f"\n=== Request Info ===")
-    print(f"Client IP: {client_ip}")
-    print(f"Remote Address: {request.remote_addr}")
-    print(f"Method: {request.method}")
-    print(f"URL: {request.url}")
-    print(f"User-Agent: {request.headers.get('User-Agent', 'N/A')}")
-    print(f"Headers:")
-    for header_name, header_value in request.headers:
-        print(f"  {header_name}: {header_value}")
-    print("===================\n")
+    headers_str = "; ".join([f"{name}={value}" for name, value in request.headers])
+    print(f"Request: IP={client_ip} Method={request.method} URL={request.url} Headers=[{headers_str}]")
+    
+    # Also log to database
+    server = WeatherWebServer()
+    user_agent = request.headers.get('User-Agent')
+    referer = request.headers.get('Referer')
+    server.log_user_request(client_ip, request.method, request.url, user_agent, referer)
 
 @app.route('/')
 def index():
@@ -413,7 +572,7 @@ def index():
     period = request.args.get('period', '24h')
     
     # Validate plot_type parameter
-    if plot_type not in ['temperature', 'humidity']:
+    if plot_type not in ['temperature', 'humidity', 'temp_hum']:
         plot_type = 'temperature'  # Default to safe value
     
     # Validate period parameter
@@ -441,8 +600,8 @@ def plot(data_type):
         period = '24h'  # Default to safe value
     
     # Validate data type
-    if data_type not in ['temperature', 'humidity']:
-        return "Invalid data type. Use 'temperature' or 'humidity'", 400
+    if data_type not in ['temperature', 'humidity', 'temp_hum']:
+        return "Invalid data type. Use 'temperature', 'humidity', or 'temp_hum'", 400
     
     # Get date range for the period
     start_date, end_date = server.get_date_range_for_period(period)
@@ -451,6 +610,56 @@ def plot(data_type):
     plot_buffer = server.generate_plot(data_type, start_date, end_date)
     
     return send_file(plot_buffer, mimetype='image/png')
+
+@app.route('/users')
+def users():
+    """Route that shows daily visitor statistics."""
+    log_request_info()
+    
+    server = WeatherWebServer()
+    
+    # Get number of days from query parameter (default 30)
+    try:
+        days = int(request.args.get('days', 30))
+        if days < 1 or days > 365:
+            days = 30  # Default to safe value
+    except ValueError:
+        days = 30  # Default to safe value
+    
+    # Get visitor statistics
+    stats = server.get_daily_visitor_stats(days)
+    
+    # Calculate totals
+    total_unique_visitors = len(set()) if not stats else len(stats)
+    total_requests = sum(stat['total_requests'] for stat in stats)
+    total_unique_ips = 0
+    
+    # Get total unique IPs across all days
+    try:
+        conn = sqlite3.connect(server.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(DISTINCT ip_address) 
+            FROM user_requests
+            WHERE datetime(timestamp) >= datetime('now', '-{} days')
+        '''.format(days))
+        result = cursor.fetchone()
+        total_unique_ips = result[0] if result else 0
+        conn.close()
+    except Exception as e:
+        print(f"Error getting total unique IPs: {e}")
+    
+    # Prepare data for template
+    template_data = {
+        'stats': stats,
+        'days': days,
+        'total_unique_visitors': total_unique_ips,
+        'total_requests': total_requests,
+        'period_start': (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d') if stats else None,
+        'period_end': datetime.now().strftime('%Y-%m-%d')
+    }
+    
+    return render_template('users.html', **template_data)
 
 def main():
     """Main function to run the web server."""
